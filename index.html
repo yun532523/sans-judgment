@@ -2,20 +2,97 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<meta name="description" content="狂妄之人 · Sans 审判战 — 浏览器里运行的像素弹幕审判战，键盘与触屏都能操作。">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>狂妄之人 · Sans 审判战</title>
+<link rel="icon" href="data:,">
 <link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=block" rel="stylesheet">
 <style>
   :root { --bg: #000; }
-  html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; }
-  body { display: flex; align-items: center; justify-content: center; }
+  html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; overscroll-behavior: none; -webkit-text-size-adjust: 100%; }
+  body {
+    display: flex; align-items: center; justify-content: center; box-sizing: border-box;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  #fit { position: relative; display: inline-block; transform-origin: 50% 50%; }
   #stage { transform-origin: 50% 55%; will-change: transform; }
   #cv { display: block; image-rendering: pixelated; }
+
+  /* ---------------------------------------------------------- touch pad
+     Sits above the canvas but outside #stage, so the camera shake/zoom never
+     moves it. Sizes scale off --u (one game pixel), set by fit() in game.js. */
+  #pad {
+    position: absolute; inset: 0; display: none; pointer-events: none; touch-action: none;
+    font-family: "SimHei", "Microsoft YaHei", system-ui, sans-serif;
+    --hi: #ffb000; --sel: #ffe600;
+  }
+  body.touch #pad { display: block; }
+  #pad button {
+    pointer-events: auto; touch-action: none; -webkit-appearance: none; appearance: none;
+    margin: 0; padding: 0; border: 0; border-radius: 4px;
+    background: rgba(255, 255, 255, .07); box-shadow: inset 0 0 0 2px rgba(255, 255, 255, .32);
+    color: #fff; font: inherit; font-size: calc(var(--u, 1px) * 22); line-height: 1;
+    display: grid; place-items: center;
+    -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none;
+    -webkit-user-select: none; user-select: none;
+    transition: background .07s linear, box-shadow .07s linear, color .07s linear;
+  }
+  #pad button.on { background: rgba(255, 176, 0, .2); box-shadow: inset 0 0 0 2px var(--hi); color: var(--sel); }
+  @media (hover: hover) { #pad button:hover { box-shadow: inset 0 0 0 2px rgba(255, 255, 255, .62); } }
+
+  #dpad {
+    position: absolute; left: 2.6%; bottom: 4.5%; width: clamp(132px, 23%, 260px); aspect-ratio: 1;
+    display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); gap: 5%;
+    opacity: .55; transition: opacity .12s linear;
+  }
+  #dpad .up { grid-column: 2; grid-row: 1; }
+  #dpad .lf { grid-column: 1; grid-row: 2; }
+  #dpad .rt { grid-column: 3; grid-row: 2; }
+  #dpad .dn { grid-column: 2; grid-row: 3; }
+  #dpad button::before { content: ''; width: 44%; height: 44%; background: currentColor; clip-path: polygon(50% 4%, 96% 94%, 4% 94%); }
+  #dpad .dn::before { transform: rotate(180deg); }
+  #dpad .lf::before { transform: rotate(-90deg); }
+  #dpad .rt::before { transform: rotate(90deg); }
+
+  #acts { position: absolute; right: 2.6%; bottom: 4.5%; width: clamp(150px, 25%, 300px); aspect-ratio: 1; opacity: .55; transition: opacity .12s linear; }
+  #acts button { position: absolute; }
+  #acts .z { right: 0; bottom: 0; width: 49%; aspect-ratio: 1; }
+  #acts .x { right: 54%; bottom: 33%; width: 36%; aspect-ratio: 1; }
+
+  #sys { position: absolute; right: 2.6%; top: 4%; display: flex; gap: calc(var(--u, 1px) * 10); opacity: .62; transition: opacity .12s linear; }
+  #sys button { width: calc(var(--u, 1px) * 88); aspect-ratio: 1.7; font-size: calc(var(--u, 1px) * 19); }
+
+  body.touch #pad.act #dpad, body.touch #pad.act #acts { opacity: 1; }
+  body.touch #pad.act #sys { opacity: .85; }
 </style>
 </head>
 <body>
-<div id="stage"><canvas id="cv" width="1280" height="720"></canvas></div>
+<div id="fit">
+  <div id="stage"><canvas id="cv" width="1280" height="720"></canvas></div>
+  <div id="pad">
+    <div id="dpad">
+      <button class="up" data-k="u" aria-label="上"></button>
+      <button class="lf" data-k="l" aria-label="左"></button>
+      <button class="rt" data-k="r" aria-label="右"></button>
+      <button class="dn" data-k="d" aria-label="下"></button>
+    </div>
+    <div id="acts">
+      <button class="x" data-k="x" aria-label="取消">取消</button>
+      <button class="z" data-k="z" aria-label="确认">确认</button>
+    </div>
+    <div id="sys">
+      <button data-k="esc" aria-label="暂停">暂停</button>
+      <button data-k="f" aria-label="全屏">全屏</button>
+      <button data-k="m" aria-label="静音">静音</button>
+    </div>
+  </div>
+</div>
 <audio id="music" src="music.m4a" preload="auto"></audio>
 <svg width="0" height="0" style="position:absolute">
   <filter id="ca" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB">
@@ -32,5 +109,6 @@
 <script src="js/sim.js"></script>
 <script src="js/render.js"></script>
 <script src="js/game.js"></script>
+<script src="js/touch.js"></script>
 </body>
 </html>

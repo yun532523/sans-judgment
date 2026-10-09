@@ -3,7 +3,7 @@
   const G = window.G, R = G.R, B = G.b, clamp = G.clamp, PI = Math.PI;
   G.build();
 
-  const out = document.getElementById('cv'), stage = document.getElementById('stage');
+  const out = document.getElementById('cv'), stage = document.getElementById('stage'), fitEl = document.getElementById('fit');
   const music = document.getElementById('music');
   const caR = document.getElementById('caR'), caB = document.getElementById('caB');
   R.init(out);
@@ -11,15 +11,27 @@
   // ---------------------------------------------------------------- input
   const keys = {}, pressed = {};
   const MAP = { ArrowLeft: 'l', KeyA: 'l', ArrowRight: 'r', KeyD: 'r', ArrowUp: 'u', KeyW: 'u', ArrowDown: 'd', KeyS: 'd', KeyZ: 'z', Enter: 'z', Space: 'z', KeyX: 'x', ShiftLeft: 'x', ShiftRight: 'x', Escape: 'esc', KeyP: 'p', KeyF: 'f', KeyM: 'm' };
-  addEventListener('keydown', e => { const k = MAP[e.code]; if (!k) return; e.preventDefault(); if (!keys[k]) pressed[k] = true; keys[k] = true; audioUnlock(); });
-  addEventListener('keyup', e => { const k = MAP[e.code]; if (k) keys[k] = false; });
+  // shared by the keyboard and the on-screen pad (core exposes it as __sans.input)
+  const pressKey = k => { if (!keys[k]) pressed[k] = true; keys[k] = true; };
+  const releaseKey = k => { keys[k] = false; };
+  let touchUI = matchMedia('(any-pointer: coarse)').matches; // on-screen pad: shown for touch, swapped by real input
+  addEventListener('keydown', e => { const k = MAP[e.code]; if (!k) return; e.preventDefault(); pressKey(k); audioUnlock(); });
+  addEventListener('keyup', e => { const k = MAP[e.code]; if (k) releaseKey(k); });
   addEventListener('pointerdown', () => audioUnlock());
   const hit = k => { const v = pressed[k]; pressed[k] = false; return v; };
   const clearPressed = () => { for (const k in pressed) pressed[k] = false; };
 
   // ---------------------------------------------------------------- sfx (synthesized)
-  let AC = null, master = null, noiseBuf = null, muted = false;
+  let AC = null, master = null, noiseBuf = null, muted = false, primed = false;
   function audioUnlock() {
+    // iOS refuses a programmatic play() until the element has been started from a gesture,
+    // so start it silently (muted) the first time real input arrives.
+    if (!primed) {
+      primed = true; music.muted = true;
+      const p = music.play();
+      const done = () => { if (state !== 'play') music.pause(); music.muted = muted; };
+      if (p && p.then) p.then(done, done);
+    }
     if (AC) { if (AC.state === 'suspended') AC.resume(); return; }
     AC = new (window.AudioContext || window.webkitAudioContext)();
     master = AC.createGain(); master.gain.value = 0.32; master.connect(AC.destination);
@@ -464,7 +476,7 @@
       if (sel) { ctx.imageSmoothingEnabled = false; ctx.drawImage(R.heart.red, 430, y + 6, 24, 20); }
     });
     R.text(TITLE[tSel].d, 640, 690, { size: 12, scale: 2, align: 'center', color: '#888' });
-    R.text('方向键/WASD 移动 · Z/Enter 确认 · X 取消 · Esc 暂停 · F 全屏 · M 静音', 640, 20, { size: 12, scale: 1.7, align: 'center', color: '#555' });
+    R.text(touchUI ? '左下方向键移动 · 右下 确认 / 取消' : '方向键/WASD 移动 · Z/Enter 确认 · X 取消 · Esc 暂停 · F 全屏 · M 静音', 640, 20, { size: 12, scale: 1.7, align: 'center', color: '#555' });
     R.present({});
     if (hit('u')) { tSel = (tSel + 3) % 4; SFX.move(); }
     if (hit('d')) { tSel = (tSel + 1) % 4; SFX.move(); }
@@ -481,7 +493,14 @@
     requestAnimationFrame(loop);
     fpsN++; if (now - fpsT > 1000) { fps = fpsN * 1000 / (now - fpsT); fpsN = 0; fpsT = now; }
     const dtw = Math.min(0.1, (now - lastW) / 1000); lastW = now;
-    if (hit('f')) { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen().catch(() => {}); }
+    if (hit('f')) {
+      if (document.fullscreenElement) document.exitFullscreen();
+      else if (document.documentElement.requestFullscreen) {
+        document.documentElement.requestFullscreen()
+          .then(() => { try { screen.orientation.lock('landscape').catch(() => {}); } catch (e) { } })
+          .catch(() => {});
+      }
+    }
     if (hit('m')) { muted = !muted; music.muted = muted; }
     try {
       if (state === 'title') frameTitle();
@@ -492,8 +511,15 @@
     } catch (e) { window.__err = String(e.stack || e); console.error(e); }
   }
   function fit() {
-    const k = Math.min(innerWidth / 1280, innerHeight / 720);
+    const cs = getComputedStyle(document.body);
+    const availW = innerWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    const availH = innerHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+    // held upright, a 16:9 stage is turned on its side so it can fill the screen
+    const turn = touchUI && availH > availW * 1.05;
+    const k = turn ? Math.min(availH / 1280, availW / 720) : Math.min(availW / 1280, availH / 720);
     out.style.width = 1280 * k + 'px'; out.style.height = 720 * k + 'px';
+    fitEl.style.transform = turn ? 'rotate(90deg)' : '';
+    document.documentElement.style.setProperty('--u', k + 'px');
   }
   addEventListener('resize', fit); fit();
   requestAnimationFrame(loop);
@@ -509,5 +535,7 @@
       forcedT = t; S.evI = G.events.findIndex(e => e.t > t - 0.2); if (S.evI < 0) S.evI = G.events.length;
       framePlay(1 / 60);
       return { hp: S.hp, inc: S.incidents, state };
-    }, start: (m, t) => { mode = m; audioUnlock(); newRun(t || 0, 1); }, get S() { return S; }, get state() { return state; }, get fps() { return fps; }, get t() { return S ? S.t : 0; } };
+    }, start: (m, t) => { mode = m; audioUnlock(); newRun(t || 0, 1); }, get S() { return S; }, get state() { return state; }, get fps() { return fps; }, get t() { return S ? S.t : 0; },
+    input: { press: pressKey, release: releaseKey },
+    get touch() { return touchUI; }, set touch(v) { const was = touchUI; touchUI = !!v; if (was !== touchUI) fit(); } };
 })();
